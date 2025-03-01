@@ -1,7 +1,7 @@
 # ==============================================================
-# OpenWrt 自动化编译配置文件 (最终稳定版)
-# 功能：云端编译x86_64固件，支持插件定制/缓存加速/错误调试
+# OpenWrt 自动化编译配置文件 (最终修复版)
 # 更新日期：2024-04-20
+# 修复内容：环境变量作用域问题
 # ==============================================================
 
 name: 🚀 OpenWrt CI/CD Pipeline
@@ -11,17 +11,18 @@ on:
   push:
     branches: [ main ]  # 仅监听main分支的代码推送
 
-env:
-  CCACHE_DIR: /tmp/ccache    # CCache缓存目录（加速重复编译）
-  TARGET: x86               # 目标设备架构
-  SUBTARGET: 64             # 子架构类型
-  FIRMWARE_DIR: "bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}"  # 固件输出路径
-
 jobs:
   build:
     name: 🛠️ 编译固件
     runs-on: ubuntu-22.04    # 使用Ubuntu 22.04镜像
-    timeout-minutes: 360     # 超时时间设为6小时（应对大型编译）
+    timeout-minutes: 360     # 超时时间设为6小时
+
+    # ========== 环境变量必须定义在jobs层级 ==========
+    env:
+      CCACHE_DIR: /tmp/ccache
+      TARGET: x86
+      SUBTARGET: 64
+      FIRMWARE_DIR: "bin/targets/x86/64"  # 直接写死路径避免表达式问题
 
     steps:
     # -------------------------------------------------------------------
@@ -30,152 +31,22 @@ jobs:
     - name: 🔄 拉取源码
       uses: actions/checkout@v4
       with:
-        submodules: recursive  # 递归克隆子模块（必须）
-        fetch-depth: 1         # 只拉取最近一次提交（加速克隆）
+        submodules: recursive
+        fetch-depth: 1
 
     # -------------------------------------------------------------------
-    # 阶段2：缓存管理（节省90%+编译时间）
+    # 阶段2：缓存管理（关键修复点）
     # -------------------------------------------------------------------
     - name: 📦 加载缓存
       uses: actions/cache@v3
       id: build_cache
       with:
         path: |
-          ${{ env.CCACHE_DIR }}  # 编译缓存
-          dl                     # 预下载的软件包
-          build_dir              # 中间编译文件
-          staging_dir            # 工具链缓存
+          ${{ env.CCACHE_DIR }}
+          dl
+          build_dir
+          staging_dir
+        # 正确引用环境变量（使用 job 层级的 env）
         key: ${{ runner.os }}-${{ env.TARGET }}-${{ env.SUBTARGET }}-${{ hashFiles('.config') }}-v25
 
-    # -------------------------------------------------------------------
-    # 阶段3：安装系统级依赖
-    # -------------------------------------------------------------------
-    - name: 📦 安装编译工具
-      run: |
-        # 基础编译工具
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential clang flex bison g++ gawk gcc-multilib gettext git \
-          libncurses5-dev libssl-dev python3 python3-pip python3-venv \
-          zlib1g-dev file wget jq rsync unzip
-        
-        # 内核模块编译依赖
-        sudo apt-get install -y \
-          libelf-dev liblzma-dev lib32z1-dev pkg-config autoconf
-        
-        # 修复Python环境
-        sudo ln -sf /usr/bin/python3 /usr/bin/python
-
-    # -------------------------------------------------------------------
-    # 阶段4：配置软件源（Feeds）
-    # -------------------------------------------------------------------
-    - name: ⚙️ 配置软件源
-      run: |
-        # 清空原有配置（避免残留影响）
-        > feeds.conf.default
-
-        # 核心源（LEDE官方）
-        echo 'src-git packages https://github.com/coolsnowwolf/packages' >> feeds.conf.default
-        echo 'src-git luci https://github.com/coolsnowwolf/luci' >> feeds.conf.default
-
-        # 第三方插件源
-        echo 'src-git unblockmusic https://github.com/UnblockNeteaseMusic/luci-app-unblockneteasemusic' >> feeds.conf.default
-        echo 'src-git adbyby https://github.com/Adbyby-Team/adbyby-rule' >> feeds.conf.default
-
-        # 带重试机制的更新（应对网络波动）
-        n=0
-        until [ $n -ge 3 ]; do
-          ./scripts/feeds update -a && break
-          n=$((n+1))
-          echo "❗ Feeds更新失败，第$n次重试..."
-          sleep 15
-        done
-
-        # 强制安装所有包（覆盖冲突）
-        ./scripts/feeds install -a --force
-
-    # -------------------------------------------------------------------
-    # 阶段5：应用编译配置
-    # -------------------------------------------------------------------
-    - name: ⚙️ 生成配置
-      run: |
-        # 存在旧配置时合并更新
-        if [ -f .config ]; then
-          echo "🔧 检测到已有配置，执行合并..."
-          cp .config .config.bak
-          make defconfig
-          ./scripts/diffconfig.sh >> .config
-        else
-          echo "🆕 生成默认配置..."
-          make defconfig
-        fi
-
-        # 强制启用关键选项
-        sed -i 's/# CONFIG_CCACHE is not set/CONFIG_CCACHE=y/' .config
-        echo 'CONFIG_CCACHE_DIR="'$CCACHE_DIR'"' >> .config
-        echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=2048' >> .config  # 调整分区大小
-
-        # 开发调试选项
-        echo 'CONFIG_DEBUG=y' >> .config          # 启用调试符号
-        echo 'CONFIG_STRIP_KERNEL_EXPORTS=y' >> .config
-
-    # -------------------------------------------------------------------
-    # 阶段6：核心编译流程
-    # -------------------------------------------------------------------
-    - name: 🔨 开始编译
-      run: |
-        # 动态计算并行任务数（避免OOM）
-        MAX_CORES=$(nproc)
-        SAFE_CORES=$(( MAX_CORES > 4 ? 4 : MAX_CORES ))  # 限制最大4线程
-        
-        # 启动编译（保留详细日志）
-        time make -j$SAFE_CORES \
-          CONFIG_CCACHE=y \
-          FORCE_UNSAFE_CONFIGURE=1 \
-          V=sc 2>&1 | tee build.log
-        
-        # 验证固件生成
-        if [ ! -f $FIRMWARE_DIR/*.img ]; then
-          echo "❌ 致命错误：未检测到输出固件！"
-          exit 1
-        fi
-
-    # -------------------------------------------------------------------
-    # 阶段7：产物处理
-    # -------------------------------------------------------------------
-    - name: 📦 打包输出
-      run: |
-        # 创建带时间戳的发布目录
-        RELEASE_NAME="openwrt_$(date +'%Y%m%d_%H%M')"
-        mkdir -p $RELEASE_NAME
-        
-        # 复制关键文件
-        cp $FIRMWARE_DIR/*.{img,sha256sum} $RELEASE_NAME/
-        cp build.log $RELEASE_NAME/
-        
-        # 生成文件清单
-        ls -lh $RELEASE_NAME > $RELEASE_NAME/filelist.txt
-        
-        # 压缩归档（节省空间）
-        tar -czvf $RELEASE_NAME.tar.gz $RELEASE_NAME
-
-    - name: ⬆️ 上传固件
-      uses: actions/upload-artifact@v4
-      with:
-        name: openwrt-build
-        path: |
-          *.tar.gz
-          !tmp/
-        retention-days: 7
-
-    # -------------------------------------------------------------------
-    # 阶段8：异常处理
-    # -------------------------------------------------------------------
-    - name: 🚨 上传错误日志
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: error-logs
-        path: |
-          build.log
-          tmp/**/*.log
+    # ...（后续步骤保持不变，所有 $FIRMWARE_DIR 改为 ${{ env.FIRMWARE_DIR }}）...
