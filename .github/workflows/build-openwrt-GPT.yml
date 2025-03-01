@@ -63,6 +63,7 @@ jobs:
       - name: Compile Toolchain
         run: |
           cd lede
+          export FORCE_UNSAFE_CONFIGURE=1  # **修复 root 权限问题**
           make tools/install -j2 V=s  # **降低并行编译线程**
 
       # 8️⃣ **提前下载所有编译所需依赖**
@@ -75,6 +76,7 @@ jobs:
       - name: Compile OpenWrt
         run: |
           cd lede
+          export FORCE_UNSAFE_CONFIGURE=1  # **修复 root 权限问题**
           export CCACHE_DIR=~/.ccache  # **设置 ccache 目录**
           export CONFIG_CCACHE=y  # **启用 ccache 加速编译**
           make -j2 V=s  # **降低并行线程，防止 GitHub 超负荷**
