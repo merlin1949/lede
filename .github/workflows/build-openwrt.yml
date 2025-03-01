@@ -1,84 +1,79 @@
-name: OpenWrt CI/CD Pipeline
+name: Build OpenWrt (Lede)
 
+# 触发方式：
+# - 手动触发 (workflow_dispatch)
+# - 定期触发 (每周自动编译)
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
-
-env:
-  CCACHE_DIR: /tmp/ccache
-  TZ: Asia/Shanghai
+  workflow_dispatch:  # 允许手动点击运行
+  schedule:
+    - cron: "0 0 * * 0"  # 每周日 00:00 触发编译 (可根据需求调整)
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    runs-on: ubuntu-latest  # GitHub Actions 运行环境
+    container: ubuntu:22.04  # 在 Ubuntu 22.04 容器中运行，确保稳定
 
     steps:
-    # ------------- 初始化阶段 -------------
-    - name: Checkout source
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
+      # 1️⃣ **拉取 OpenWrt Lede 源码**
+      - name: Checkout Lede Source
+        uses: actions/checkout@v4
+        with:
+          repository: coolsnowwolf/lede  # Lede 源码仓库
+          ref: master  # 分支
+          submodules: true  # 获取子模块，确保完整性
 
-    # ------------- 缓存加速层 -------------
-    - name: Cache acceleration
-      uses: actions/cache@v3
-      with:
-        path: |
-          ${{ env.CCACHE_DIR }}
-          dl
-          build_dir
-        key: ${{ runner.os }}-openwrt-${{ hashFiles('.config', 'feeds.conf.default') }}-v12
+      # 2️⃣ **安装编译所需的环境**
+      - name: Setup Build Environment
+        run: |
+          apt update && apt install -y \
+            build-essential libncurses5-dev gawk git \
+            gettext unzip file libssl-dev wget python3 \
+            ccache  # 使用 ccache 加速重复编译
 
-    # ------------- 依赖安装层 -------------
-    - name: Install build tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential clang flex g++ gawk gcc-multilib gettext git \
-          libncurses5-dev libssl-dev python3 python3-pip python3-venv \
-          rsync unzip zlib1g-dev file wget jq
+      # 3️⃣ **恢复缓存：包括 ccache 和 dl（依赖下载目录）**
+      - name: Restore Cache (DL & ccache)
+        uses: actions/cache@v4
+        with:
+          path: |
+            dl  # 依赖包下载缓存
+            ~/.ccache  # 编译缓存
+          key: openwrt-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            openwrt-${{ runner.os }}-
 
-    # ------------- 源码配置层 -------------
-    - name: Configure feeds
-      run: |
-        [ -f feeds.conf.default ] && mv feeds.conf.default feeds.conf.default.orig
-        cat << EOF > feeds.conf.default
-        src-git luci https://github.com/coolsnowwolf/luci
-        src-git packages https://github.com/coolsnowwolf/packages
-        src-git unblockmusic https://github.com/UnblockNeteaseMusic/luci-app-unblockneteasemusic
-        EOF
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a --force
+      # 4️⃣ **更新并安装 OpenWrt 组件**
+      - name: Update and Install Feeds
+        run: |
+          ./scripts/feeds update -a  # 更新 feeds
+          ./scripts/feeds install -a  # 安装 feeds 中的所有软件包
 
-    # ------------- 核心编译层 -------------
-    - name: Build firmware
-      run: |
-        [ -f .config ] || make defconfig
-        ./scripts/diffconfig.sh > .config
-        make -j$(($(nproc) + 1)) \
-          CONFIG_CCACHE=y \
-          CONFIG_CCACHE_DIR="$CCACHE_DIR" \
-          V=s
+      # 5️⃣ **应用 `.config` 配置文件**
+      - name: Apply Custom Config
+        run: |
+          [ -e .config ] && cp .config .config.backup  # 备份原有 config
+          make defconfig  # 解析 config 文件，确保配置完整
 
-    # ------------- 产物管理层 -------------
-    - name: Package artifacts
-      run: |
-        FIRMWARE_DIR="bin/targets/x86/64"
-        mkdir -p _artifacts
-        find $FIRMWARE_DIR -type f $ -name '*.img' -o -name '*.gz' $ -exec cp {} _artifacts \;
+      # 6️⃣ **提前下载所有编译所需依赖**
+      - name: Pre-download Packages (Speed up Build)
+        run: make download -j$(nproc) || true  # 预下载依赖，避免编译时因网络问题失败
 
-    - name: Upload firmware
-      uses: actions/upload-artifact@v4  # 关键修复：使用v4版本
-      with:
-        name: openwrt-releases
-        path: _artifacts/*
-        retention-days: 3
+      # 7️⃣ **开始编译 OpenWrt**
+      - name: Compile OpenWrt
+        run: |
+          export CCACHE_DIR=~/.ccache  # 设置 ccache 目录
+          export CONFIG_CCACHE=y  # 启用 ccache 加速编译
+          make -j$(nproc) V=s  # 使用所有 CPU 核心进行编译
 
-    # ------------- 清理阶段 -------------
-    - name: Clean workspace
-      if: always()
-      run: |
-        rm -rf tmp build_dir _artifacts
+      # 8️⃣ **上传编译后的固件**
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-firmware  # 固件名称
+          path: bin/targets/  # OpenWrt 固件输出目录
+          compression-level: 0  # 关闭压缩，提高上传速度
+
+      # 9️⃣ **清理缓存，避免 GitHub 存储占用过多**
+      - name: Cleanup Cache (Optional)
+        run: |
+          rm -rf dl  # 删除下载的依赖包，释放空间
+          rm -rf ~/.ccache  # 删除 ccache 编译缓存，防止 GitHub Actions 存储被占满
