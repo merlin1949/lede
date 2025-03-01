@@ -1,0 +1,49 @@
+name: Build OpenWrt
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 根据需要调整超时时间
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive  # 确保克隆子模块
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang flex g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev
+
+    - name: Set up Environment
+      run: |
+        echo "src-git luci https://github.com/coolsnowwolf/luci" >> feeds.conf.default
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Use Custom Config (可选)
+      run: |
+        if [ -f .config ]; then
+          cp .config .config.old
+          make defconfig
+          ./scripts/diffconfig.sh > .config
+        else
+          make defconfig
+        fi
+
+    - name: Compile Firmware
+      run: |
+        make -j$(nproc) V=s  # 使用所有可用核心编译，输出详细信息
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-firmware
+        path: bin/targets/*/*
+        retention-days: 1  # 保留时间
