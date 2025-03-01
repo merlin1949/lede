@@ -1,0 +1,164 @@
+# ==============================================================
+# OpenWrt 自动化编译配置文件 (最终验证版)
+# 更新日期：2024-04-20
+# 修复内容：缓存路径/环境变量/依赖顺序
+# ==============================================================
+
+name: 🚀 OpenWrt CI/CD Pipeline
+
+on:
+  workflow_dispatch:    # 允许在GitHub网页手动触发
+  push:
+    branches: [ main ]  # 仅监听main分支的代码推送
+
+jobs:
+  build:
+    name: 🛠️ 编译固件
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360  # 6小时超时
+
+    # ========== 环境变量 ==========
+    env:
+      CCACHE_DIR: /tmp/ccache
+      TARGET: x86
+      SUBTARGET: 64
+      FIRMWARE_DIR: "bin/targets/x86/64"  # 固定路径避免嵌套表达式问题
+
+    steps:
+    # -------------------------------------------------------------------
+    # 阶段1：代码仓库初始化
+    # -------------------------------------------------------------------
+    - name: 🔄 拉取源码
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive  # 必须启用子模块递归克隆
+        fetch-depth: 1         # 加速克隆
+
+    # -------------------------------------------------------------------
+    # 阶段2：缓存管理（关键修复点）
+    # -------------------------------------------------------------------
+    - name: 📦 加载缓存
+      uses: actions/cache@v3
+      id: build_cache
+      with:
+        path: |
+          ${{ env.CCACHE_DIR }}
+          dl
+          build_dir
+        key: ${{ runner.os }}-${{ env.TARGET }}-${{ env.SUBTARGET }}-${{ hashFiles('.config') }}-v26
+
+    # -------------------------------------------------------------------
+    # 阶段3：依赖安装（新增网络重试）
+    # -------------------------------------------------------------------
+    - name: 📦 安装编译工具
+      run: |
+        # 基础依赖（带重试机制）
+        for i in {1..3}; do
+          sudo apt-get update && \
+          sudo apt-get install -y \
+            build-essential clang flex bison g++ gawk gcc-multilib gettext git \
+            libncurses5-dev libssl-dev python3 python3-pip python3-venv \
+            zlib1g-dev file wget jq rsync unzip \
+            libelf-dev liblzma-dev lib32z1-dev pkg-config autoconf \
+          && break || sleep 30
+        done
+
+        # 修复Python环境
+        sudo ln -sf /usr/bin/python3 /usr/bin/python
+
+    # -------------------------------------------------------------------
+    # 阶段4：源码预下载（缓存未命中时执行）
+    # -------------------------------------------------------------------
+    - name: ⚡ 初始化工具链
+      if: steps.build_cache.outputs.cache-hit != 'true'
+      run: |
+        make download -j$(nproc) || make download -j1  # 降级重试
+        make -j$(nproc) tools/install
+
+    # -------------------------------------------------------------------
+    # 阶段5：软件源配置（强制覆盖）
+    # -------------------------------------------------------------------
+    - name: ⚙️ 配置软件源
+      run: |
+        > feeds.conf.default  # 清空旧配置
+        echo 'src-git packages https://github.com/coolsnowwolf/packages' >> feeds.conf.default
+        echo 'src-git luci https://github.com/coolsnowwolf/luci' >> feeds.conf.default
+        echo 'src-git unblockmusic https://github.com/UnblockNeteaseMusic/luci-app-unblockneteasemusic' >> feeds.conf.default
+        echo 'src-git adbyby https://github.com/Adbyby-Team/adbyby-rule' >> feeds.conf.default
+
+        # 带重试的更新
+        n=0
+        until [ $n -ge 3 ]; do
+          ./scripts/feeds update -a && break
+          n=$((n+1))
+          sleep 15
+        done
+        ./scripts/feeds install -a --force
+
+    # -------------------------------------------------------------------
+    # 阶段6：编译配置（合并新旧配置）
+    # -------------------------------------------------------------------
+    - name: ⚙️ 生成配置
+      run: |
+        if [ -f .config ]; then
+          echo "🔧 合并已有配置..."
+          cp .config .config.bak
+          make defconfig
+          ./scripts/diffconfig.sh >> .config
+        else
+          echo "🆕 生成默认配置..."
+          make defconfig
+        fi
+
+        # 强制启用关键选项
+        sed -i 's/# CONFIG_CCACHE is not set/CONFIG_CCACHE=y/' .config
+        echo 'CONFIG_CCACHE_DIR="'$CCACHE_DIR'"' >> .config
+        echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=2048' >> .config  # 分区大小
+
+    # -------------------------------------------------------------------
+    # 阶段7：核心编译（资源限制）
+    # -------------------------------------------------------------------
+    - name: 🔨 开始编译
+      run: |
+        MAX_CORES=$(nproc)
+        SAFE_CORES=$(( MAX_CORES > 4 ? 4 : MAX_CORES ))  # 限制线程数防OOM
+        time make -j$SAFE_CORES \
+          CONFIG_CCACHE=y \
+          FORCE_UNSAFE_CONFIGURE=1 \
+          V=sc 2>&1 | tee build.log
+
+        # 验证输出
+        if [ ! -f ${{ env.FIRMWARE_DIR }}/*.img ]; then
+          echo "❌ 错误：未生成固件文件！"
+          exit 1
+        fi
+
+    # -------------------------------------------------------------------
+    # 阶段8：产物处理（带时间戳）
+    # -------------------------------------------------------------------
+    - name: 📦 打包输出
+      run: |
+        RELEASE_NAME="openwrt_$(date +'%Y%m%d_%H%M')"
+        mkdir -p $RELEASE_NAME
+        cp ${{ env.FIRMWARE_DIR }}/*.{img,sha256sum} $RELEASE_NAME/
+        cp build.log $RELEASE_NAME/
+        tar -czvf $RELEASE_NAME.tar.gz $RELEASE_NAME
+
+    - name: ⬆️ 上传固件
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-build
+        path: "*.tar.gz"
+        retention-days: 7
+
+    # -------------------------------------------------------------------
+    # 阶段9：异常处理（日志收集）
+    # -------------------------------------------------------------------
+    - name: 🚨 上传错误日志
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: error-logs
+        path: |
+          build.log
+          tmp/**/*.log
