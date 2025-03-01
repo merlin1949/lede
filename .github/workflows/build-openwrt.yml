@@ -1,0 +1,43 @@
+name: Build OpenWrt
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          repository: coolsnowwolf/lede
+          ref: master
+          submodules: true
+
+      - name: Setup Environment
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses5-dev gawk git \
+              gettext unzip file libssl-dev wget python3
+
+      - name: Initialize and Update Feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure Build
+        run: |
+          make menuconfig  # 手动配置需要的功能
+
+      - name: Compile OpenWrt
+        run: |
+          make -j$(nproc) V=s
+
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v3
+        with:
+          name: openwrt-firmware
+          path: bin/targets/
