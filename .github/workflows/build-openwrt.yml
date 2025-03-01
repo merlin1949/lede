@@ -1,14 +1,17 @@
 name: Build OpenWrt (Lede)
 
+# **触发方式**
+# - 手动触发 (`workflow_dispatch`)
+# - 定期触发 (`schedule`)，默认每周日自动编译
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # **允许手动点击运行**
   schedule:
-    - cron: "0 0 * * 0"
+    - cron: "0 0 * * 0"  # **每周日 00:00 触发编译 (可调整)**
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container: ubuntu:22.04
+    runs-on: ubuntu-latest  # **GitHub Actions 服务器**
+    container: ubuntu:22.04  # **固定为 Ubuntu 22.04，避免 GitHub 版本变更**
 
     steps:
       # 1️⃣ **安装 Git 2.18+，确保 `submodules` 支持**
@@ -24,7 +27,7 @@ jobs:
           git submodule update --init --recursive
 
       # 3️⃣ **安装编译所需的环境**
-      - name: Setup Build Environment
+      - name: Install Dependencies
         run: |
           apt update && apt install -y \
             build-essential libncurses5-dev gawk git rsync \
@@ -36,8 +39,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            lede/dl
-            ~/.ccache
+            lede/dl  # **缓存 OpenWrt 依赖包**
+            ~/.ccache  # **缓存编译结果**
           key: openwrt-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             openwrt-${{ runner.os }}-
@@ -46,40 +49,40 @@ jobs:
       - name: Update and Install Feeds
         run: |
           cd lede
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          ./scripts/feeds update -a  # **更新所有 feeds**
+          ./scripts/feeds install -a  # **安装所有可用的 feeds 组件**
 
       # 6️⃣ **应用 `.config` 配置文件**
       - name: Apply Custom Config
         run: |
           cd lede
-          [ -e .config ] && cp .config .config.backup
-          make defconfig
+          [ -e .config ] && cp .config .config.backup  # **备份旧配置**
+          make defconfig  # **解析配置，确保完整性**
 
       # 7️⃣ **提前下载所有编译所需依赖**
       - name: Pre-download Packages (Speed up Build)
         run: |
           cd lede
-          make download -j$(nproc) || true
+          make download -j$(nproc) || true  # **预下载依赖，防止编译失败**
 
       # 8️⃣ **开始编译 OpenWrt**
       - name: Compile OpenWrt
         run: |
           cd lede
-          export CCACHE_DIR=~/.ccache
-          export CONFIG_CCACHE=y
-          make -j$(nproc) V=s
+          export CCACHE_DIR=~/.ccache  # **设置 ccache 目录**
+          export CONFIG_CCACHE=y  # **启用 ccache 加速编译**
+          make -j$(nproc) V=s  # **多线程编译，详细日志**
 
       # 9️⃣ **上传编译后的固件**
       - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-firmware
-          path: lede/bin/targets/
-          compression-level: 0
+          name: openwrt-firmware  # **固件名称**
+          path: lede/bin/targets/  # **OpenWrt 固件输出目录**
+          compression-level: 0  # **关闭压缩，加快上传**
 
       # 🔟 **清理缓存，避免 GitHub 存储占用过多**
       - name: Cleanup Cache (Optional)
         run: |
-          rm -rf lede/dl
-          rm -rf ~/.ccache
+          rm -rf lede/dl  # **删除下载的依赖包**
+          rm -rf ~/.ccache  # **删除 ccache 编译缓存**
