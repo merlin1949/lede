@@ -1,43 +1,84 @@
-name: Build OpenWrt
+name: OpenWrt CI/CD Pipeline
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+  push:
+    branches: [ main ]
+
+env:
+  CCACHE_DIR: /tmp/ccache
+  TZ: Asia/Shanghai
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-        with:
-          repository: coolsnowwolf/lede
-          ref: master
-          submodules: true
+    # ------------- 初始化阶段 -------------
+    - name: Checkout source
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
 
-      - name: Setup Environment
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential libncurses5-dev gawk git \
-              gettext unzip file libssl-dev wget python3
+    # ------------- 缓存加速层 -------------
+    - name: Cache acceleration
+      uses: actions/cache@v3
+      with:
+        path: |
+          ${{ env.CCACHE_DIR }}
+          dl
+          build_dir
+        key: ${{ runner.os }}-openwrt-${{ hashFiles('.config', 'feeds.conf.default') }}-v12
 
-      - name: Initialize and Update Feeds
-        run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+    # ------------- 依赖安装层 -------------
+    - name: Install build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential clang flex g++ gawk gcc-multilib gettext git \
+          libncurses5-dev libssl-dev python3 python3-pip python3-venv \
+          rsync unzip zlib1g-dev file wget jq
 
-      - name: Configure Build
-        run: |
-          make menuconfig  # 手动配置需要的功能
+    # ------------- 源码配置层 -------------
+    - name: Configure feeds
+      run: |
+        [ -f feeds.conf.default ] && mv feeds.conf.default feeds.conf.default.orig
+        cat << EOF > feeds.conf.default
+        src-git luci https://github.com/coolsnowwolf/luci
+        src-git packages https://github.com/coolsnowwolf/packages
+        src-git unblockmusic https://github.com/UnblockNeteaseMusic/luci-app-unblockneteasemusic
+        EOF
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a --force
 
-      - name: Compile OpenWrt
-        run: |
-          make -j$(nproc) V=s
+    # ------------- 核心编译层 -------------
+    - name: Build firmware
+      run: |
+        [ -f .config ] || make defconfig
+        ./scripts/diffconfig.sh > .config
+        make -j$(($(nproc) + 1)) \
+          CONFIG_CCACHE=y \
+          CONFIG_CCACHE_DIR="$CCACHE_DIR" \
+          V=s
 
-      - name: Upload Firmware
-        uses: actions/upload-artifact@v3
-        with:
-          name: openwrt-firmware
-          path: bin/targets/
+    # ------------- 产物管理层 -------------
+    - name: Package artifacts
+      run: |
+        FIRMWARE_DIR="bin/targets/x86/64"
+        mkdir -p _artifacts
+        find $FIRMWARE_DIR -type f $ -name '*.img' -o -name '*.gz' $ -exec cp {} _artifacts \;
+
+    - name: Upload firmware
+      uses: actions/upload-artifact@v4  # 关键修复：使用v4版本
+      with:
+        name: openwrt-releases
+        path: _artifacts/*
+        retention-days: 3
+
+    # ------------- 清理阶段 -------------
+    - name: Clean workspace
+      if: always()
+      run: |
+        rm -rf tmp build_dir _artifacts
