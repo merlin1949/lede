@@ -1,8 +1,5 @@
 name: Build OpenWrt (Lede)
 
-# **触发方式**
-# - 手动触发 (`workflow_dispatch`)
-# - 定期触发 (`schedule`)，默认每周日自动编译
 on:
   workflow_dispatch:  # **允许手动点击运行**
   schedule:
@@ -10,11 +7,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest  # **GitHub Actions 服务器**
-    container: ubuntu:22.04  # **固定为 Ubuntu 22.04，避免 GitHub 版本变更**
-
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04  # **固定 Ubuntu 22.04 版本**
+    
     steps:
-      # 1️⃣ **安装 Git 2.18+，确保 `submodules` 支持**
+      # 1️⃣ **安装 Git**
       - name: Install Git 2.18+
         run: |
           apt update && apt install -y git
@@ -32,15 +29,15 @@ jobs:
           apt update && apt install -y \
             build-essential libncurses5-dev gawk git rsync \
             gettext unzip file libssl-dev wget python3 \
-            python3-distutils ccache
+            python3-distutils ccache libelf-dev  # **修复 libelf.so.1 问题**
 
-      # 4️⃣ **恢复缓存（`dl` 依赖包 & `ccache` 编译缓存）**
-      - name: Restore Cache (DL & ccache)
+      # 4️⃣ **恢复缓存**
+      - name: Restore Cache
         uses: actions/cache@v4
         with:
           path: |
-            lede/dl  # **缓存 OpenWrt 依赖包**
-            ~/.ccache  # **缓存编译结果**
+            lede/dl  
+            ~/.ccache
           key: openwrt-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             openwrt-${{ runner.os }}-
@@ -49,48 +46,48 @@ jobs:
       - name: Update and Install Feeds
         run: |
           cd lede
-          ./scripts/feeds update -a  # **更新所有 feeds**
-          ./scripts/feeds install -a  # **安装所有可用的 feeds 组件**
+          ./scripts/feeds update -a  
+          ./scripts/feeds install -a  
 
       # 6️⃣ **应用 `.config` 配置文件**
       - name: Apply Custom Config
         run: |
           cd lede
-          [ -e .config ] && cp .config .config.backup  # **备份旧配置**
-          make defconfig  # **解析配置，确保完整性**
+          [ -e .config ] && cp .config .config.backup  
+          make defconfig  
 
       # 7️⃣ **先编译工具链，避免 `world` 失败**
       - name: Compile Toolchain
         run: |
           cd lede
-          export FORCE_UNSAFE_CONFIGURE=1  # **修复 root 权限问题**
-          make tools/install -j2 V=s  # **降低并行编译线程**
+          export FORCE_UNSAFE_CONFIGURE=1  
+          make tools/install -j2 V=s  
 
       # 8️⃣ **提前下载所有编译所需依赖**
-      - name: Pre-download Packages (Speed up Build)
+      - name: Pre-download Packages
         run: |
           cd lede
-          make download -j2 || true  # **预下载依赖，避免网络问题**
+          make download -j2 || true  
 
-      # 9️⃣ **开始编译 OpenWrt（降低并行线程，提高稳定性）**
+      # 9️⃣ **开始编译 OpenWrt**
       - name: Compile OpenWrt
         run: |
           cd lede
-          export FORCE_UNSAFE_CONFIGURE=1  # **修复 root 权限问题**
-          export CCACHE_DIR=~/.ccache  # **设置 ccache 目录**
-          export CONFIG_CCACHE=y  # **启用 ccache 加速编译**
-          make -j2 V=s  # **降低并行线程，防止 GitHub 超负荷**
+          export FORCE_UNSAFE_CONFIGURE=1  
+          export CCACHE_DIR=~/.ccache  
+          export CONFIG_CCACHE=y  
+          make -j2 V=s  
 
       # 🔟 **上传编译后的固件**
       - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-firmware  # **固件名称**
-          path: lede/bin/targets/  # **OpenWrt 固件输出目录**
-          compression-level: 0  # **关闭压缩，加快上传**
+          name: openwrt-firmware  
+          path: lede/bin/targets/  
+          compression-level: 0  
 
-      # 🔟 **清理缓存，避免 GitHub 存储占用过多**
-      - name: Cleanup Cache (Optional)
+      # 🔟 **清理缓存**
+      - name: Cleanup Cache
         run: |
-          rm -rf lede/dl  # **删除下载的依赖包**
-          rm -rf ~/.ccache  # **删除 ccache 编译缓存**
+          rm -rf lede/dl  
+          rm -rf ~/.ccache  
