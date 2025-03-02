@@ -34,7 +34,6 @@ jobs:
           rm -rf /usr/share/dotnet
           rm -rf /usr/local/lib/android
           rm -rf /opt/ghc
-          docker image prune -a -f
           df -h
 
       # 4️⃣ **完整克隆 Lede 源码**
@@ -107,7 +106,7 @@ jobs:
           export FORCE_UNSAFE_CONFIGURE=1  
           export CCACHE_DIR=~/.ccache  
           export CONFIG_CCACHE=y  
-          make -j1 V=s  # **限制并行任务，减少磁盘占用**
+          make -j2 V=s  # **改用 -j2，编译更快**
 
       # 1️⃣4️⃣ **上传编译后的固件**
       - name: Upload Firmware
