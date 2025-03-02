@@ -1,6 +1,6 @@
 # =================================================
-# OpenWrt x86 编译自动化工作流
-# 功能：自动修复依赖 / 缓存加速 / 详细日志收集
+# OpenWrt x86 虚拟机专用编译配置文件
+# 功能：自动修复依赖/缓存加速/错误日志收集
 # 更新日期：2024-04-20
 # =================================================
 
@@ -15,7 +15,7 @@ env:
   CCACHE_DIR: /tmp/ccache  # 缓存目录
   TARGET: x86              # 目标架构
   SUBTARGET: 64            # 子架构
-  FIRMWARE_DIR: lede/bin/targets/x86/64  # 固定路径避免变量嵌套问题
+  FIRMWARE_DIR: lede/bin/targets/x86/64  # 固定路径，避免变量嵌套问题
 
 jobs:
   build:
@@ -23,15 +23,15 @@ jobs:
     timeout-minutes: 240   # 超时时间（4小时）
 
     steps:
-    # ---------------------- 阶段 1：源码初始化 ----------------------
+    # ---------------------- 阶段1：源码初始化 ----------------------
     - name: 🔄 拉取源码
       uses: actions/checkout@v4
       with:
-        path: lede  # 避免 lede/lede 目录嵌套问题
-        submodules: recursive  # 必须递归克隆子模块
+        path: lede  # 这样 `lede` 目录不会嵌套
+        submodules: recursive  # 递归克隆子模块
         fetch-depth: 1         # 加速克隆
 
-    # ---------------------- 阶段 2：缓存管理 ----------------------
+    # ---------------------- 阶段2：缓存管理 ----------------------
     - name: 📦 加载缓存
       uses: actions/cache@v3
       id: cache
@@ -42,7 +42,7 @@ jobs:
           lede/build_dir
         key: ${{ runner.os }}-x86-64-${{ hashFiles('lede/.config') }}-v3  # 版本标识
 
-    # ---------------------- 阶段 3：安装系统依赖 ----------------------
+    # ---------------------- 阶段3：安装系统依赖 ----------------------
     - name: 📦 安装编译工具
       run: |
         sudo apt-get update -y
@@ -55,35 +55,52 @@ jobs:
         echo "TERM=linux" >> $GITHUB_ENV
         echo "TERMINFO=/usr/share/terminfo" >> $GITHUB_ENV
 
-    # ---------------------- 阶段 4：更新 feeds 并安装缺失的 Lua 依赖 ----------------------
-    - name: ⚙️ 更新 Feeds 并修复 Lua 依赖
+    # ---------------------- 阶段4：确保脚本在正确目录 ----------------------
+    - name: 🛠️ 复制自定义脚本到 lede 目录
+      run: |
+        cp diy-part1.sh lede/
+        cp diy-part2.sh lede/
+
+    # ---------------------- 阶段5：执行自定义脚本 ----------------------
+    - name: 🛠️ 执行 diy-part1.sh
       run: |
         cd lede
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        # 手动安装丢失的 Lua 相关依赖（避免 make 报错）
-        ./scripts/feeds install lua-eco-nl80211 lua-cjson-lua5.3 lua-eco-md5 || true
+        chmod +x diy-part1.sh
+        ./diy-part1.sh
 
-    # ---------------------- 新增阶段：执行 diy-part1.sh ----------------------
-    - name: 🛠️ 执行自定义脚本 1
+    # ---------------------- 阶段6：生成编译配置 ----------------------
+    - name: ⚙️ 生成配置
       run: |
         cd lede
-        chmod +x ../diy-part1.sh
-        ../diy-part1.sh
+        # 合并旧配置（如果存在）
+        [ -f .config ] && cp .config .config.bak || true
+        make defconfig
 
-    # ---------------------- 阶段 5：生成编译配置 ----------------------
-    - name: ⚙️ 生成配置（防止 out of sync）
-      run: |
-        cd lede
-        make defconfig  # 确保配置同步
-        chmod +x ../diy-part2.sh
-        ../diy-part2.sh
+        # 执行 diy-part2.sh
+        chmod +x diy-part2.sh
+        ./diy-part2.sh
 
-    # ---------------------- 阶段 6：核心编译 ----------------------
+        # 自动修复常见缺失依赖
+        REQUIRED_DEPS=(
+          "CONFIG_PACKAGE_lm-sensors=y"
+          "CONFIG_PACKAGE_wsdd2=y"
+          "CONFIG_PACKAGE_bc=y"
+          "CONFIG_PACKAGE_libpam=y"
+          "CONFIG_PACKAGE_luci-base=y"
+        )
+        for dep in "${REQUIRED_DEPS[@]}"; do
+          grep -q "$dep" .config || echo "$dep" >> .config
+        done
+
+        # 启用 ccache 加速
+        echo "CONFIG_CCACHE=y" >> .config
+        echo "CONFIG_CCACHE_DIR=\"$CCACHE_DIR\"" >> .config
+
+    # ---------------------- 阶段7：核心编译 ----------------------
     - name: 🔨 开始编译
       run: |
         cd lede
-        # 动态线程控制（防止 OOM）
+        # 动态线程控制（防止OOM）
         MAX_CORES=$(nproc)
         SAFE_CORES=$(( MAX_CORES > 4 ? 4 : MAX_CORES ))
 
@@ -92,12 +109,13 @@ jobs:
         set -o pipefail
         time make -j$SAFE_CORES V=sc 2>&1 | tee build.log tmp/work/logs/full.log
 
-        # 验证固件是否生成
+        # 验证固件存在性
         [ -f $FIRMWARE_DIR/*.img ] || (echo "❌ 固件未生成"; exit 1)
 
-    # ---------------------- 阶段 7：产物处理 ----------------------
+    # ---------------------- 阶段8：产物处理 ----------------------
     - name: 📦 打包输出
       run: |
+        cd lede
         RELEASE_NAME="openwrt_x86_$(date +'%Y%m%d_%H%M')"
         mkdir -p $RELEASE_NAME
         cp $FIRMWARE_DIR/*.{img,sha256sum} $RELEASE_NAME/
@@ -108,10 +126,10 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: openwrt-x86
-        path: "*.tar.gz"
+        path: "lede/*.tar.gz"
         retention-days: 7
 
-    # ---------------------- 阶段 8：错误处理 ----------------------
+    # ---------------------- 阶段9：错误处理 ----------------------
     - name: 🚨 上传错误日志
       if: failure()
       uses: actions/upload-artifact@v4
