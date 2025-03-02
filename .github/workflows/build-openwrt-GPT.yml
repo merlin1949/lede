@@ -1,23 +1,24 @@
 name: Build OpenWrt (Lede)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:   # 手动触发
   schedule:
-    - cron: "0 0 * * 0"
+    - cron: "0 0 * * 0"  # 每周日 00:00 (可自行调整)
 
 concurrency:
   group: openwrt-build
-  cancel-in-progress: true
+  cancel-in-progress: true  # 确保不会并发多个相同任务
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container: ubuntu:22.04
     steps:
-      # 1️⃣ 检查环境
+      # 1️⃣ 检查系统环境
       - name: Check System Info
         run: |
-          which sudo || echo "⚠️ no sudo"
+          echo "🔍 Checking system environment..."
+          which sudo || echo "⚠️ sudo not found (not an issue in container)"
           df -h
           free -h
 
@@ -26,20 +27,22 @@ jobs:
         run: |
           apt update && apt install -y git
 
-      # 3️⃣ 清理磁盘
+      # 3️⃣ 释放磁盘空间
       - name: Free Disk Space
         run: |
-          rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          rm -rf /usr/share/dotnet
+          rm -rf /usr/local/lib/android
+          rm -rf /opt/ghc
           df -h
 
-      # 4️⃣ 克隆源码
+      # 4️⃣ 克隆 Lede 源码
       - name: Clone Lede Repository
         run: |
           git clone --depth=1 --recurse-submodules https://github.com/coolsnowwolf/lede.git lede
           cd lede
           git submodule update --init --recursive
 
-      # 5️⃣ 安装依赖(含ncurses-term)
+      # 5️⃣ 安装依赖 (含 ncurses-term，避免 "Error opening terminal")
       - name: Install Dependencies
         run: |
           apt update && apt install -y \
@@ -48,7 +51,7 @@ jobs:
             python3-distutils ccache libelf-dev \
             ncurses-term
 
-      # 6️⃣ 设置环境变量(防交互)
+      # 6️⃣ 设置环境变量 (TERM=dumb, NO_MENUCONFIG=1 等)
       - name: Export environment
         run: |
           echo "TERM=dumb" >> $GITHUB_ENV
@@ -57,57 +60,57 @@ jobs:
           echo "BATCH=1" >> $GITHUB_ENV
           echo "NO_MENUCONFIG=1" >> $GITHUB_ENV
 
-      # 7️⃣ 删除旧缓存
+      # 7️⃣ 清理旧缓存文件
       - name: Clean Previous Build Cache
         run: |
           rm -rf lede/tmp
           rm -rf ~/.ccache
           rm -rf lede/dl
 
-      # 8️⃣ 更新 & 安装 feeds
+      # 8️⃣ 更新并安装 Feeds
       - name: Update and Install Feeds
         run: |
           cd lede
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # 9️⃣ 预下载包
+      # 9️⃣ 预下载所有编译依赖
       - name: Pre-download Packages
         run: |
           cd lede
           make download -j2 || true
 
-      # 🔟 编译工具链
+      # 🔟 编译工具链 (tools/install)
       - name: Compile Toolchain
         run: |
           cd lede
           export FORCE_UNSAFE_CONFIGURE=1
           make tools/install -j2 V=s
 
-      # 1️⃣1️⃣ diy-part1.sh
+      # 1️⃣1️⃣ 运行 diy-part1.sh (可在此做插件拉取/修改IP等)
       - name: Run diy-part1.sh
         run: |
           cd lede
           chmod +x diy-part1.sh
           ./diy-part1.sh
 
-      # 1️⃣2️⃣ diy-part2.sh (在这里生成 .config + olddefconfig)
+      # 1️⃣2️⃣ 运行 diy-part2.sh (生成 .config 并执行 make olddefconfig)
       - name: Run diy-part2.sh
         run: |
           cd lede
           chmod +x diy-part2.sh
           ./diy-part2.sh
 
-      # 1️⃣3️⃣ 编译 OpenWrt(无 "Apply Custom Config")
+      # 1️⃣3️⃣ 编译 OpenWrt
       - name: Compile OpenWrt
         run: |
           cd lede
           export FORCE_UNSAFE_CONFIGURE=1
           export CCACHE_DIR=~/.ccache
           export CONFIG_CCACHE=y
-          make -j2 V=s
+          make -j2 V=s  # 按需改为 -j1 或 -j2 等
 
-      # 1️⃣4️⃣ 上传固件
+      # 1️⃣4️⃣ 上传编译后的固件 (Upload Artifact)
       - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
@@ -115,7 +118,7 @@ jobs:
           path: lede/bin/targets/
           compression-level: 0
 
-      # 1️⃣5️⃣ 上传日志
+      # 1️⃣5️⃣ 上传编译日志 (成功或失败都上传)
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
