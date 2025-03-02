@@ -57,15 +57,7 @@ jobs:
     # ---------------------- 阶段4：软件源配置 ----------------------
     - name: ⚙️ 配置软件源
       run: |
-        # 强制覆盖feeds配置（使用国内镜像加速）
-        cat > feeds.conf.default << EOF
-        src-git packages https://github.com/coolsnowwolf/packages
-        src-git luci https://github.com/coolsnowwolf/luci
-        src-git unblockmusic https://hub.fastgit.xyz/UnblockNeteaseMusic/luci-app-unblockneteasemusic
-        src-git adbyby https://hub.fastgit.xyz/Adbyby-Team/adbyby-rule
-        EOF
-
-        # 带重试机制的更新（解决网络波动问题）
+        # 使用你现有的 feeds.conf.default
         n=0
         until [ $n -ge 3 ]; do
           ./scripts/feeds update -a && break
@@ -74,12 +66,22 @@ jobs:
         done
         ./scripts/feeds install -a --force
 
+    # ---------------------- 新增阶段：执行 diy-part1.sh ----------------------
+    - name: 🛠️ 执行自定义脚本1
+      run: |
+        chmod +x diy-part1.sh
+        ./diy-part1.sh
+
     # ---------------------- 阶段5：生成编译配置 ----------------------
     - name: ⚙️ 生成配置
       run: |
         # 合并旧配置（如果存在）
         [ -f .config ] && cp .config .config.bak || true
         make defconfig
+
+        # 执行 diy-part2.sh
+        chmod +x diy-part2.sh
+        ./diy-part2.sh
 
         # 自动修复常见缺失依赖
         REQUIRED_DEPS=(
