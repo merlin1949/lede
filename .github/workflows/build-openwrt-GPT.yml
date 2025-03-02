@@ -43,13 +43,14 @@ jobs:
           cd lede
           git submodule update --init --recursive
 
-      # 5️⃣ **安装编译所需的环境**
+      # 5️⃣ **安装编译所需的环境（含 ncurses-term）**
       - name: Install Dependencies
         run: |
           apt update && apt install -y \
             build-essential libncurses5-dev gawk git rsync \
             gettext unzip file libssl-dev wget python3 \
-            python3-distutils ccache libelf-dev
+            python3-distutils ccache libelf-dev \
+            ncurses-term  # **新增此行：提供更多终端支持**
 
       # 6️⃣ **删除旧的缓存**
       - name: Clean Previous Build Cache
@@ -62,59 +63,60 @@ jobs:
       - name: Update and Install Feeds
         run: |
           cd lede
-          ./scripts/feeds update -a  
-          ./scripts/feeds install -a  
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
       # 8️⃣ **提前下载所有编译所需依赖**
       - name: Pre-download Packages
         run: |
           cd lede
-          make download -j2 || true  # **确保下载所有依赖**
+          make download -j2 || true
 
-      # 9️⃣ **先编译工具链，避免 `world` 失败**
+      # 9️⃣ **先编译工具链（tools/install），避免 `world` 失败**
       - name: Compile Toolchain
         run: |
           cd lede
-          export FORCE_UNSAFE_CONFIGURE=1  
-          make tools/install -j2 V=s  
+          export FORCE_UNSAFE_CONFIGURE=1
+          make tools/install -j2 V=s
 
-      # 🔟 **运行 diy-part1.sh**
+      # 🔟 **运行 diy-part1.sh**（自定义操作 & 插件拉取）
       - name: Run diy-part1.sh
         run: |
           cd lede
           chmod +x diy-part1.sh
           ./diy-part1.sh
 
-      # 1️⃣1️⃣ **运行 diy-part2.sh**
+      # 1️⃣1️⃣ **运行 diy-part2.sh**（配置 .config）
       - name: Run diy-part2.sh
         run: |
           cd lede
           chmod +x diy-part2.sh
           ./diy-part2.sh
 
-      # 1️⃣2️⃣ **应用 `.config` 配置文件**
+      # 1️⃣2️⃣ **应用 `.config`，设置 TERM=xterm 避免终端错误**
       - name: Apply Custom Config
         run: |
           cd lede
-          [ -e .config ] && cp .config .config.backup  
-          make defconfig  
+          export TERM=xterm  # **设置终端类型**
+          [ -e .config ] && cp .config .config.backup
+          make defconfig    # **仍然使用 defconfig，不会再报“unknown terminal”**
 
-      # 1️⃣3️⃣ **开始编译 OpenWrt**
+      # 1️⃣3️⃣ **正式编译 OpenWrt**
       - name: Compile OpenWrt
         run: |
           cd lede
-          export FORCE_UNSAFE_CONFIGURE=1  
-          export CCACHE_DIR=~/.ccache  
-          export CONFIG_CCACHE=y  
-          make -j2 V=s  # **改用 -j2，编译更快**
+          export FORCE_UNSAFE_CONFIGURE=1
+          export CCACHE_DIR=~/.ccache
+          export CONFIG_CCACHE=y
+          make -j2 V=s  # 并行编译，加快速度
 
       # 1️⃣4️⃣ **上传编译后的固件**
       - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-firmware  
-          path: lede/bin/targets/  
-          compression-level: 0  
+          name: openwrt-firmware
+          path: lede/bin/targets/
+          compression-level: 0
 
       # 1️⃣5️⃣ **上传编译日志（成功或失败都上传）**
       - name: Upload Build Logs
