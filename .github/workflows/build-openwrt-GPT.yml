@@ -9,7 +9,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: ubuntu:22.04  # **固定 Ubuntu 22.04 版本**
-    
     steps:
       # 1️⃣ **安装 Git**
       - name: Install Git 2.18+
@@ -49,6 +48,20 @@ jobs:
           ./scripts/feeds update -a  
           ./scripts/feeds install -a  
 
+      # 🔹 **运行 diy-part1.sh（修改插件和默认配置）**
+      - name: Run diy-part1.sh
+        run: |
+          cd lede  # **确保在 lede 目录内**
+          chmod +x ../diy-part1.sh
+          ../diy-part1.sh
+
+      # 🔹 **运行 diy-part2.sh（配置 .config）**
+      - name: Run diy-part2.sh
+        run: |
+          cd lede  # **确保在 lede 目录内**
+          chmod +x ../diy-part2.sh
+          ../diy-part2.sh
+
       # 6️⃣ **应用 `.config` 配置文件**
       - name: Apply Custom Config
         run: |
@@ -67,7 +80,9 @@ jobs:
       - name: Pre-download Packages
         run: |
           cd lede
-          make download -j2 || true  
+          if [ ! -d "dl" ]; then
+            make download -j2 || true
+          fi
 
       # 9️⃣ **开始编译 OpenWrt**
       - name: Compile OpenWrt
@@ -76,7 +91,7 @@ jobs:
           export FORCE_UNSAFE_CONFIGURE=1  
           export CCACHE_DIR=~/.ccache  
           export CONFIG_CCACHE=y  
-          make -j2 V=s  
+          make -j2 V=s  # **改为 -j2，防止 GitHub Actions 内存溢出**
 
       # 🔟 **上传编译后的固件**
       - name: Upload Firmware
@@ -85,6 +100,14 @@ jobs:
           name: openwrt-firmware  
           path: lede/bin/targets/  
           compression-level: 0  
+
+      # 🔟 **上传日志（如果编译失败，方便分析）**
+      - name: Upload Build Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: lede/logs/
 
       # 🔟 **清理缓存**
       - name: Cleanup Cache
