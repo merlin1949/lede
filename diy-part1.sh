@@ -1,7 +1,8 @@
 #!/bin/bash
 # ================================
 #   diy-part1.sh - OpenWRT 自定义设置
-#   修正：删除 `cd lede`，修复 `uci` 命令
+#   ✅ 移除 `cd lede`
+#   ✅ 确保所有命令都在当前目录执行
 # ================================
 
 echo "🔧 [diy-part1] 开始执行..."
@@ -74,4 +75,23 @@ config dnsmasq
 	option rebind_protection '1'
 	option rebind_localhost '1'
 	option local '/lan/'
-	option
+	option domain 'lan'
+	option expandhosts '1'
+	option nonegcache '0'
+	option authoritative '1'
+	option readethers '1'
+	option leasefile '/tmp/dhcp.leases'
+	option resolvfile '/tmp/resolv.conf.auto'
+	option nonwildcard '1'
+	option localservice '1'
+
+config dhcp 'lan'
+	option interface 'lan'
+	option ignore '1'  # 关闭DHCP
+
+config dhcp 'wan'
+	option interface 'wan'
+	option ignore '1'
+EOF
+
+echo "✅ [diy-part1] 执行完成！"
