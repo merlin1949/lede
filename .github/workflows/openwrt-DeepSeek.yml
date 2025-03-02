@@ -1,6 +1,6 @@
 # =================================================
-# OpenWrt x86 GitHub Actions 自动编译
-# 修复 `Error opening terminal: unknown` + menuconfig 卡住问题
+# OpenWrt x86 编译自动化工作流
+# 功能：自动修复依赖 / 缓存加速 / 详细日志收集
 # 更新日期：2024-04-20
 # =================================================
 
@@ -15,117 +15,89 @@ env:
   CCACHE_DIR: /tmp/ccache  # 缓存目录
   TARGET: x86              # 目标架构
   SUBTARGET: 64            # 子架构
-  FIRMWARE_DIR: bin/targets/x86/64  # 固定路径避免变量嵌套问题
-  TERM: linux
-  TERMINFO: /usr/share/terminfo
-  FORCE_UNSAFE_CONFIGURE: 1
-  BATCH: 1
-  NO_MENUCONFIG: 1
+  FIRMWARE_DIR: lede/bin/targets/x86/64  # 固定路径避免变量嵌套问题
 
 jobs:
   build:
-    runs-on: ubuntu-22.04  # 必须使用22.04系统
+    runs-on: ubuntu-22.04  # 必须使用 22.04 系统
     timeout-minutes: 240   # 超时时间（4小时）
 
     steps:
-    # ---------------------- 阶段1：源码初始化 ----------------------
+    # ---------------------- 阶段 1：源码初始化 ----------------------
     - name: 🔄 拉取源码
       uses: actions/checkout@v4
       with:
-        path: lede  # 避免 lede/lede 目录错误
+        path: lede  # 避免 lede/lede 目录嵌套问题
         submodules: recursive  # 必须递归克隆子模块
         fetch-depth: 1         # 加速克隆
 
-    # ---------------------- 阶段2：缓存管理 ----------------------
+    # ---------------------- 阶段 2：缓存管理 ----------------------
     - name: 📦 加载缓存
       uses: actions/cache@v3
       id: cache
       with:
         path: |
           ${{ env.CCACHE_DIR }}
-          dl
-          build_dir
-        key: ${{ runner.os }}-x86-64-${{ hashFiles('.config') }}-v3  # 版本标识
+          lede/dl
+          lede/build_dir
+        key: ${{ runner.os }}-x86-64-${{ hashFiles('lede/.config') }}-v3  # 版本标识
 
-    # ---------------------- 阶段3：安装系统依赖 ----------------------
+    # ---------------------- 阶段 3：安装系统依赖 ----------------------
     - name: 📦 安装编译工具
       run: |
         sudo apt-get update -y
+        # 安装所有必要依赖（包含终端修复包）
         sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib \
           gettext git libncurses5-dev libssl-dev python3 python3-pip rsync unzip zlib1g-dev \
-          libelf-dev liblzma-dev lib32z1-dev pkg-config autoconf ncurses-term ncurses-base \
-          libncursesw5 libtinfo5
+          libelf-dev liblzma-dev lib32z1-dev pkg-config autoconf ncurses-term ncurses-base
 
-    # ---------------------- 阶段4：软件源配置 ----------------------
-    - name: ⚙️ 配置软件源
+        # 修复终端环境变量
+        echo "TERM=linux" >> $GITHUB_ENV
+        echo "TERMINFO=/usr/share/terminfo" >> $GITHUB_ENV
+
+    # ---------------------- 阶段 4：更新 feeds 并安装缺失的 Lua 依赖 ----------------------
+    - name: ⚙️ 更新 Feeds 并修复 Lua 依赖
       run: |
         cd lede
-        n=0
-        until [ $n -ge 3 ]; do
-          ./scripts/feeds update -a && break
-          n=$((n+1))
-          sleep 15
-        done
-        ./scripts/feeds install -a --force
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        # 手动安装丢失的 Lua 相关依赖（避免 make 报错）
+        ./scripts/feeds install lua-eco-nl80211 lua-cjson-lua5.3 lua-eco-md5 || true
 
     # ---------------------- 新增阶段：执行 diy-part1.sh ----------------------
-    - name: 🛠️ 执行自定义脚本1
-      run: |
-        cd lede  # 确保进入正确目录
-        chmod +x diy-part1.sh
-        ./diy-part1.sh
-
-    # ---------------------- 阶段5：生成编译配置 ----------------------
-    - name: ⚙️ 生成配置
+    - name: 🛠️ 执行自定义脚本 1
       run: |
         cd lede
-        # 确保配置存在
-        [ -f .config ] && cp .config .config.bak || true
+        chmod +x ../diy-part1.sh
+        ../diy-part1.sh
 
-        # 生成默认配置（避免 menuconfig 交互）
-        make olddefconfig < /dev/null
-        make defconfig
+    # ---------------------- 阶段 5：生成编译配置 ----------------------
+    - name: ⚙️ 生成配置（防止 out of sync）
+      run: |
+        cd lede
+        make defconfig  # 确保配置同步
+        chmod +x ../diy-part2.sh
+        ../diy-part2.sh
 
-        # 执行 diy-part2.sh
-        chmod +x diy-part2.sh
-        ./diy-part2.sh
-
-        # 自动修复常见缺失依赖
-        REQUIRED_DEPS=(
-          "CONFIG_PACKAGE_lm-sensors=y"
-          "CONFIG_PACKAGE_wsdd2=y"
-          "CONFIG_PACKAGE_bc=y"
-          "CONFIG_PACKAGE_libpam=y"
-          "CONFIG_PACKAGE_luci-base=y"
-        )
-        for dep in "${REQUIRED_DEPS[@]}"; do
-          grep -q "$dep" .config || echo "$dep" >> .config
-        done
-
-        # 启用ccache加速
-        echo "CONFIG_CCACHE=y" >> .config
-        echo "CONFIG_CCACHE_DIR=\"$CCACHE_DIR\"" >> .config
-
-    # ---------------------- 阶段6：核心编译 ----------------------
+    # ---------------------- 阶段 6：核心编译 ----------------------
     - name: 🔨 开始编译
       run: |
         cd lede
-        # 动态线程控制（防止OOM）
+        # 动态线程控制（防止 OOM）
         MAX_CORES=$(nproc)
         SAFE_CORES=$(( MAX_CORES > 4 ? 4 : MAX_CORES ))
 
-        # 强制记录完整日志，避免 menuconfig 卡住
+        # 强制记录完整日志
         mkdir -p tmp/work/logs
         set -o pipefail
-        time yes "" | make -j$SAFE_CORES V=sc 2>&1 | tee build.log tmp/work/logs/full.log
+        time make -j$SAFE_CORES V=sc 2>&1 | tee build.log tmp/work/logs/full.log
 
-        # 验证固件存在性
+        # 验证固件是否生成
         [ -f $FIRMWARE_DIR/*.img ] || (echo "❌ 固件未生成"; exit 1)
 
-    # ---------------------- 阶段7：产物处理 ----------------------
+    # ---------------------- 阶段 7：产物处理 ----------------------
     - name: 📦 打包输出
       run: |
-        cd lede
         RELEASE_NAME="openwrt_x86_$(date +'%Y%m%d_%H%M')"
         mkdir -p $RELEASE_NAME
         cp $FIRMWARE_DIR/*.{img,sha256sum} $RELEASE_NAME/
@@ -136,10 +108,10 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: openwrt-x86
-        path: lede/*.tar.gz
+        path: "*.tar.gz"
         retention-days: 7
 
-    # ---------------------- 阶段8：错误处理 ----------------------
+    # ---------------------- 阶段 8：错误处理 ----------------------
     - name: 🚨 上传错误日志
       if: failure()
       uses: actions/upload-artifact@v4
