@@ -27,8 +27,9 @@ jobs:
     - name: 🔄 拉取源码
       uses: actions/checkout@v4
       with:
+          path: lede  # 这样就不会出现 lede/lede 的情况
         submodules: recursive  # 必须递归克隆子模块
-        fetch-depth: 0         # 加速克隆
+        fetch-depth: 1         # 加速克隆
 
     # ---------------------- 阶段2：缓存管理 ----------------------
     - name: 📦 加载缓存
