@@ -1,13 +1,13 @@
 name: Build OpenWrt (Lede)
 
 on:
-  workflow_dispatch:   # 手动触发
+  workflow_dispatch:
   schedule:
-    - cron: "0 0 * * 0"  # 每周日 00:00 (可自行调整)
+    - cron: "0 0 * * 0"
 
 concurrency:
   group: openwrt-build
-  cancel-in-progress: true  # 确保不会并发多个相同任务
+  cancel-in-progress: true  # 不允许并发相同任务
 
 jobs:
   build:
@@ -18,7 +18,7 @@ jobs:
       - name: Check System Info
         run: |
           echo "🔍 Checking system environment..."
-          which sudo || echo "⚠️ sudo not found (not an issue in container)"
+          which sudo || echo "⚠️ sudo not found"
           df -h
           free -h
 
@@ -42,7 +42,7 @@ jobs:
           cd lede
           git submodule update --init --recursive
 
-      # 5️⃣ 安装依赖 (含 ncurses-term，避免 "Error opening terminal")
+      # 5️⃣ 安装依赖（含 ncurses-term）
       - name: Install Dependencies
         run: |
           apt update && apt install -y \
@@ -51,7 +51,7 @@ jobs:
             python3-distutils ccache libelf-dev \
             ncurses-term
 
-      # 6️⃣ 设置环境变量 (TERM=dumb, NO_MENUCONFIG=1 等)
+      # 6️⃣ 设置环境变量（避免交互式菜单）
       - name: Export environment
         run: |
           echo "TERM=dumb" >> $GITHUB_ENV
@@ -60,7 +60,7 @@ jobs:
           echo "BATCH=1" >> $GITHUB_ENV
           echo "NO_MENUCONFIG=1" >> $GITHUB_ENV
 
-      # 7️⃣ 清理旧缓存文件
+      # 7️⃣ 删除旧缓存
       - name: Clean Previous Build Cache
         run: |
           rm -rf lede/tmp
@@ -74,27 +74,31 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # 9️⃣ 预下载所有编译依赖
+      # 9️⃣ **预下载包（单线程 + 详细日志 + Debug）**
       - name: Pre-download Packages
         run: |
           cd lede
-          make download -j2 || true
+          echo "ℹ️ Starting make download (single-thread, verbose) ..."
+          make download -j1 V=s || true
+          echo "ℹ️ Done. Listing dl folder content:"
+          ls -alh dl || echo "⚠️ dl folder missing?"
+          df -h
 
-      # 🔟 编译工具链 (tools/install)
+      # 🔟 编译工具链
       - name: Compile Toolchain
         run: |
           cd lede
           export FORCE_UNSAFE_CONFIGURE=1
           make tools/install -j2 V=s
 
-      # 1️⃣1️⃣ 运行 diy-part1.sh (可在此做插件拉取/修改IP等)
+      # 1️⃣1️⃣ Run diy-part1.sh
       - name: Run diy-part1.sh
         run: |
           cd lede
           chmod +x diy-part1.sh
           ./diy-part1.sh
 
-      # 1️⃣2️⃣ 运行 diy-part2.sh (生成 .config 并执行 make olddefconfig)
+      # 1️⃣2️⃣ Run diy-part2.sh (生成 .config & make olddefconfig)
       - name: Run diy-part2.sh
         run: |
           cd lede
@@ -108,9 +112,9 @@ jobs:
           export FORCE_UNSAFE_CONFIGURE=1
           export CCACHE_DIR=~/.ccache
           export CONFIG_CCACHE=y
-          make -j2 V=s  # 按需改为 -j1 或 -j2 等
+          make -j2 V=s
 
-      # 1️⃣4️⃣ 上传编译后的固件 (Upload Artifact)
+      # 1️⃣4️⃣ 上传编译后的固件
       - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
@@ -118,7 +122,7 @@ jobs:
           path: lede/bin/targets/
           compression-level: 0
 
-      # 1️⃣5️⃣ 上传编译日志 (成功或失败都上传)
+      # 1️⃣5️⃣ 上传日志（无论成功或失败）
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
