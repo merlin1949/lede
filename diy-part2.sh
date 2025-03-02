@@ -90,6 +90,6 @@ echo "CONFIG_PACKAGE_kmod-crypto-ecb=y" >> .config
 echo "CONFIG_PACKAGE_luci-theme-netgear=y" >> .config
 
 # 1️⃣6️⃣ 保存配置
-make defconfig
+make olddefconfig < /dev/null
 
 echo "✅ diy-part2.sh 执行完成！"
