@@ -1,4 +1,4 @@
-# Coolsnowwolf 官方源
+# Coolsnowwolf 官方源 
 src-git packages https://github.com/coolsnowwolf/packages
 src-git luci https://github.com/coolsnowwolf/luci.git;openwrt-23.05
 src-git routing https://github.com/coolsnowwolf/routing
@@ -7,14 +7,11 @@ src-git telephony https://github.com/coolsnowwolf/telephony.git
 # 增加科学上网插件
 src-git helloworld https://github.com/fw876/helloworld  # SSR Plus+
 src-git passwall https://github.com/xiaorouji/openwrt-passwall  # Passwall
-src-git small https://github.com/kenzok8/small  # 依赖库
-src-git kenzo https://github.com/kenzok8/openwrt-packages  # 额外插件
+src-git kenzo https://github.com/kenzok8/openwrt-packages  # 额外插件（包含 small）
 
-# （可选）内网穿透 & 远程访问
-src-git oui https://github.com/zhaojh329/oui.git  # ZeroTier、Frp 相关
+# 内网穿透 & 远程访问
+src-git oui https://github.com/zhaojh329/oui.git  # ZeroTier、Frp
 
-# 其他（按需开启）
-# src-git video https://github.com/openwrt/video.git
-# src-git targets https://github.com/openwrt/targets.git
-# src-git oldpackages http://git.openwrt.org/packages.git
-# src-link custom /usr/src/openwrt/custom-feed
+# 可选增强功能
+src-git diy1 https://github.com/xiaorouji/openwrt-package  # AdGuardHome, SmartDNS
+src-git lienol https://github.com/Lienol/openwrt-package  # 负载均衡
