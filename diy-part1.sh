@@ -7,7 +7,6 @@
 if [ -d "lede" ]; then
     cd lede
 fi
-echo "🔧 [diy-part1] 开始执行..."
 
 # 1️⃣ **拉取第三方插件**
 git clone --depth=1 https://github.com/fw876/helloworld package/helloworld
