@@ -7,14 +7,14 @@ on:
 
 concurrency:
   group: openwrt-build
-  cancel-in-progress: true  # **确保多个任务不会同时运行**
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container: ubuntu:22.04
     steps:
-      # 1️⃣ **检查 GitHub Actions 容器环境**
+      # 1️⃣ 检查系统信息
       - name: Check System Info
         run: |
           echo "🔍 Checking system environment..."
@@ -23,12 +23,12 @@ jobs:
           df -h
           free -h
 
-      # 2️⃣ **安装 Git**
+      # 2️⃣ 安装 Git
       - name: Install Git 2.18+
         run: |
           apt update && apt install -y git
 
-      # 3️⃣ **清理不必要的文件，释放磁盘空间**
+      # 3️⃣ 清理不必要文件，释放磁盘
       - name: Free Disk Space
         run: |
           rm -rf /usr/share/dotnet
@@ -36,81 +36,84 @@ jobs:
           rm -rf /opt/ghc
           df -h
 
-      # 4️⃣ **完整克隆 Lede 源码**
+      # 4️⃣ 克隆 Lede 源码
       - name: Clone Lede Repository
         run: |
           git clone --depth=1 --recurse-submodules https://github.com/coolsnowwolf/lede.git lede
           cd lede
           git submodule update --init --recursive
 
-      # 5️⃣ **安装编译所需的环境（含 ncurses-term）**
+      # 5️⃣ 安装编译所需环境（含 ncurses-term）
       - name: Install Dependencies
         run: |
           apt update && apt install -y \
             build-essential libncurses5-dev gawk git rsync \
             gettext unzip file libssl-dev wget python3 \
             python3-distutils ccache libelf-dev \
-            ncurses-term  # **新增此行：提供更多终端支持**
+            ncurses-term
 
-      # 6️⃣ **删除旧的缓存**
+      # 6️⃣ 设置全局环境变量：TERM=xterm
+      - name: Export Terminal Env
+        run: echo "TERM=xterm" >> $GITHUB_ENV
+
+      # 7️⃣ 删除旧缓存
       - name: Clean Previous Build Cache
         run: |
           rm -rf lede/tmp
           rm -rf ~/.ccache
           rm -rf lede/dl
 
-      # 7️⃣ **更新并安装 OpenWrt 组件**
+      # 8️⃣ 更新并安装 OpenWrt 组件
       - name: Update and Install Feeds
         run: |
           cd lede
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # 8️⃣ **提前下载所有编译所需依赖**
+      # 9️⃣ 预下载编译包
       - name: Pre-download Packages
         run: |
           cd lede
           make download -j2 || true
 
-      # 9️⃣ **先编译工具链（tools/install），避免 `world` 失败**
+      # 🔟 编译工具链
       - name: Compile Toolchain
         run: |
           cd lede
           export FORCE_UNSAFE_CONFIGURE=1
-          make tools/install -j2 V=s
+          make tools/install -j2 V=s  # 不会再报“Error opening terminal: unknown”
 
-      # 🔟 **运行 diy-part1.sh**（自定义操作 & 插件拉取）
+      # 1️⃣1️⃣ 运行 diy-part1.sh
       - name: Run diy-part1.sh
         run: |
           cd lede
           chmod +x diy-part1.sh
           ./diy-part1.sh
 
-      # 1️⃣1️⃣ **运行 diy-part2.sh**（配置 .config）
+      # 1️⃣2️⃣ 运行 diy-part2.sh
       - name: Run diy-part2.sh
         run: |
           cd lede
           chmod +x diy-part2.sh
           ./diy-part2.sh
 
-      # 1️⃣2️⃣ **应用 `.config`，设置 TERM=xterm 避免终端错误**
+      # 1️⃣3️⃣ 应用 .config（make defconfig）
       - name: Apply Custom Config
         run: |
           cd lede
-          export TERM=xterm  # **设置终端类型**
           [ -e .config ] && cp .config .config.backup
-          make defconfig    # **仍然使用 defconfig，不会再报“unknown terminal”**
+          make defconfig  # 有 TERM=xterm，全程不会报错
 
-      # 1️⃣3️⃣ **正式编译 OpenWrt**
+      # 1️⃣4️⃣ 开始编译 OpenWrt
       - name: Compile OpenWrt
         run: |
           cd lede
           export FORCE_UNSAFE_CONFIGURE=1
           export CCACHE_DIR=~/.ccache
           export CONFIG_CCACHE=y
-          make -j2 V=s  # 并行编译，加快速度
+          make -j2 V=s
 
-      # 1️⃣4️⃣ **上传编译后的固件**
+      # 1️⃣5️⃣ 上传固件
       - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
@@ -118,7 +121,7 @@ jobs:
           path: lede/bin/targets/
           compression-level: 0
 
-      # 1️⃣5️⃣ **上传编译日志（成功或失败都上传）**
+      # 1️⃣6️⃣ 上传编译日志（成功或失败都上传）
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
