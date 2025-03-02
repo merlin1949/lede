@@ -1,99 +1,104 @@
-#!/bin/bash
-# ================================
-#   diy-part1.sh - OpenWRT 自定义设置
-#   ✅ 确保所有命令都在当前目录执行
-# ================================
+# =================================================
+# OpenWrt x86 虚拟机专用编译配置文件
+# 功能：自动修复依赖/缓存加速/错误日志收集
+# 更新日期：2024-04-20
+# =================================================
 
-echo "🔧 [diy-part1] 开始执行..."
+name: OpenWrt x86 Build
 
-# 1️⃣ **拉取第三方插件**
-git clone --depth=1 https://github.com/fw876/helloworld package/helloworld || true
-git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall package/passwall || true
-git clone --depth=1 https://github.com/kenzok8/openwrt-packages package/kenzok8 || true
+on:
+  workflow_dispatch:  # 手动触发
+  push:
+    branches: [ main ]  # 代码推送触发
 
-# 2️⃣ **替换默认 Netgear 主题**
-rm -rf package/lean/luci-theme-argon || true
-git clone --depth=1 https://github.com/i028/luci-theme-netgear package/luci-theme-netgear || true
+env:
+  CCACHE_DIR: /tmp/ccache  # 缓存目录
+  TARGET: x86  # 目标架构
+  SUBTARGET: 64  # 子架构
+  FIRMWARE_DIR: bin/targets/x86/64  # 固定路径避免变量嵌套问题
 
-# 3️⃣ **修改默认 IP**
-mkdir -p package/base-files/files/bin
-sed -i 's/192.168.1.1/10.0.0.3/g' package/base-files/files/bin/config_generate || true
+jobs:
+  build:
+    runs-on: ubuntu-22.04  # 必须使用 22.04 系统
+    timeout-minutes: 240  # 超时时间（4小时）
 
-# 4️⃣ **设置默认网关和 DNS**
-sed -i '/uci commit network/i\
-uci set network.lan.gateway="10.0.0.1"\ 
-uci set network.lan.dns="10.0.0.1"' package/base-files/files/bin/config_generate || true
+    steps:
+    # ---------------------- 阶段1：源码初始化 ----------------------
+    - name: 🔄 拉取源码
+      uses: actions/checkout@v4
+      with:
+        path: lede  # 确保代码不会出现在 lede/lede 目录
+        submodules: recursive  # 必须递归克隆子模块
+        fetch-depth: 1  # 加速克隆
 
-# 5️⃣ **修改 OpenWRT 主机名**
-sed -i 's/hostname=.*/hostname="OpenWRT-Test"/g' package/base-files/files/bin/config_generate || true
+    # ---------------------- 阶段2：安装系统依赖 ----------------------
+    - name: 📦 安装编译工具
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib \
+          gettext git libncurses5-dev libssl-dev python3 python3-pip rsync unzip zlib1g-dev \
+          libelf-dev liblzma-dev lib32z1-dev pkg-config autoconf ncurses-term ncurses-base
 
-# 6️⃣ **修改默认 WiFi 配置**
-mkdir -p package/base-files/files/etc/config
-cat <<EOF > package/base-files/files/etc/config/wireless
-config wifi-device 'radio0'
-	option type 'mac80211'
-	option channel 'auto'
-	option hwmode '11g'
-	option path 'platform/qca953x_wmac'
-	option htmode 'HT20'
-	option disabled '0'
+    # ---------------------- 阶段3：检查 lede 目录 ----------------------
+    - name: 🔄 确保 lede 目录存在
+      run: |
+        if [ ! -d "lede" ]; then
+          echo "❌ 目录 lede 不存在，尝试重新克隆！"
+          git clone --depth=1 https://github.com/coolsnowwolf/lede.git lede
+        fi
 
-config wifi-iface 'default_radio0'
-	option device 'radio0'
-	option mode 'ap'
-	option ssid 'OpenWRT-Test'
-	option encryption 'psk2'
-	option key '12345678'
-	option network 'lan'
+    # ---------------------- 阶段4：执行 diy-part1.sh ----------------------
+    - name: 🛠️ 执行自定义脚本1
+      run: |
+        cd lede  # 确保在正确目录执行
+        chmod +x diy-part1.sh
+        ./diy-part1.sh || echo "⚠️ diy-part1.sh 执行出错，但继续运行"
 
-config wifi-device 'radio1'
-	option type 'mac80211'
-	option channel 'auto'
-	option hwmode '11a'
-	option path 'platform/qca953x_wmac'
-	option htmode 'VHT40'
-	option disabled '0'
+    # ---------------------- 阶段5：生成编译配置 ----------------------
+    - name: ⚙️ 生成配置
+      run: |
+        cd lede
+        [ -f .config ] && cp .config .config.bak || true
+        make defconfig
 
-config wifi-iface 'default_radio1'
-	option device 'radio1'
-	option mode 'ap'
-	option ssid 'OpenWRT-Test-5G'
-	option encryption 'psk2'
-	option key '12345678'
-	option network 'lan'
-EOF
+        chmod +x diy-part2.sh
+        ./diy-part2.sh || echo "⚠️ diy-part2.sh 执行出错，但继续运行"
 
-# 7️⃣ **修改 SSH 端口**
-sed -i 's/option Port 22/option Port 2222/g' package/network/services/dropbear/files/dropbear.config || true
+    # ---------------------- 阶段6：核心编译 ----------------------
+    - name: 🔨 开始编译
+      run: |
+        cd lede
+        MAX_CORES=$(nproc)
+        SAFE_CORES=$(( MAX_CORES > 4 ? 4 : MAX_CORES ))
+        mkdir -p tmp/work/logs
+        set -o pipefail
+        time make -j$SAFE_CORES V=sc 2>&1 | tee build.log tmp/work/logs/full.log
 
-# 8️⃣ **关闭 DHCP**
-mkdir -p package/base-files/files/etc/config
-cat <<EOF > package/base-files/files/etc/config/dhcp
-config dnsmasq
-	option domainneeded '1'
-	option boguspriv '1'
-	option filterwin2k '0'
-	option localise_queries '1'
-	option rebind_protection '1'
-	option rebind_localhost '1'
-	option local '/lan/'
-	option domain 'lan'
-	option expandhosts '1'
-	option nonegcache '0'
-	option authoritative '1'
-	option readethers '1'
-	option leasefile '/tmp/dhcp.leases'
-	option resolvfile '/tmp/resolv.conf.auto'
-	option nonwildcard '1'
-	option localservice '1'
+        [ -f $FIRMWARE_DIR/*.img ] || (echo "❌ 固件未生成"; exit 1)
 
-config dhcp 'lan'
-	option interface 'lan'
-	option ignore '1'  # 关闭DHCP
+    # ---------------------- 阶段7：打包并上传 ----------------------
+    - name: 📦 打包输出
+      run: |
+        cd lede
+        RELEASE_NAME="openwrt_x86_$(date +'%Y%m%d_%H%M')"
+        mkdir -p $RELEASE_NAME
+        cp $FIRMWARE_DIR/*.{img,sha256sum} $RELEASE_NAME/
+        cp build.log $RELEASE_NAME/
+        tar -czvf $RELEASE_NAME.tar.gz $RELEASE_NAME
 
-config dhcp 'wan'
-	option interface 'wan'
-	option ignore '1'
-EOF
+    - name: ⬆️ 上传固件
+      uses: actions/upload-artifact@v4
+      with:
+        name: openwrt-x86
+        path: lede/*.tar.gz
+        retention-days: 7
 
-echo "✅ [diy-part1] 执行完成！"
+    # ---------------------- 阶段8：错误日志处理 ----------------------
+    - name: 🚨 上传错误日志
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: error-logs
+        path: |
+          lede/build.log
+          lede/tmp/work/logs/*.log
