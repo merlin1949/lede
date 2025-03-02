@@ -7,43 +7,39 @@ on:
 
 concurrency:
   group: openwrt-build
-  cancel-in-progress: true  # 确保多个任务不会同时运行
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container: ubuntu:22.04
     steps:
-      # 1️⃣ 检查 GitHub Actions 容器环境
+      # 1️⃣ 检查环境
       - name: Check System Info
         run: |
-          echo "🔍 Checking system environment..."
-          which sudo || echo "⚠️ sudo not found (not an issue)"
-          lsb_release -a || cat /etc/os-release
+          which sudo || echo "⚠️ no sudo"
           df -h
           free -h
 
       # 2️⃣ 安装 Git
-      - name: Install Git 2.18+
+      - name: Install Git
         run: |
           apt update && apt install -y git
 
-      # 3️⃣ 清理不必要文件，释放磁盘
+      # 3️⃣ 清理磁盘
       - name: Free Disk Space
         run: |
-          rm -rf /usr/share/dotnet
-          rm -rf /usr/local/lib/android
-          rm -rf /opt/ghc
+          rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           df -h
 
-      # 4️⃣ 克隆 Lede 源码
+      # 4️⃣ 克隆源码
       - name: Clone Lede Repository
         run: |
           git clone --depth=1 --recurse-submodules https://github.com/coolsnowwolf/lede.git lede
           cd lede
           git submodule update --init --recursive
 
-      # 5️⃣ 安装编译所需的环境（含 ncurses-term）
+      # 5️⃣ 安装依赖(含ncurses-term)
       - name: Install Dependencies
         run: |
           apt update && apt install -y \
@@ -52,9 +48,14 @@ jobs:
             python3-distutils ccache libelf-dev \
             ncurses-term
 
-      # 6️⃣ 设置全局环境变量：TERM=xterm
-      - name: Export Terminal Env
-        run: echo "TERM=xterm" >> $GITHUB_ENV
+      # 6️⃣ 设置环境变量(防交互)
+      - name: Export environment
+        run: |
+          echo "TERM=dumb" >> $GITHUB_ENV
+          echo "LC_ALL=C" >> $GITHUB_ENV
+          echo "LANG=C" >> $GITHUB_ENV
+          echo "BATCH=1" >> $GITHUB_ENV
+          echo "NO_MENUCONFIG=1" >> $GITHUB_ENV
 
       # 7️⃣ 删除旧缓存
       - name: Clean Previous Build Cache
@@ -63,48 +64,41 @@ jobs:
           rm -rf ~/.ccache
           rm -rf lede/dl
 
-      # 8️⃣ 更新并安装 OpenWrt 组件
+      # 8️⃣ 更新 & 安装 feeds
       - name: Update and Install Feeds
         run: |
           cd lede
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # 9️⃣ 预下载编译包
+      # 9️⃣ 预下载包
       - name: Pre-download Packages
         run: |
           cd lede
           make download -j2 || true
 
-      # 🔟 编译工具链 (tools/install)
+      # 🔟 编译工具链
       - name: Compile Toolchain
         run: |
           cd lede
           export FORCE_UNSAFE_CONFIGURE=1
           make tools/install -j2 V=s
 
-      # 1️⃣1️⃣ 运行 diy-part1.sh
+      # 1️⃣1️⃣ diy-part1.sh
       - name: Run diy-part1.sh
         run: |
           cd lede
           chmod +x diy-part1.sh
           ./diy-part1.sh
 
-      # 1️⃣2️⃣ 运行 diy-part2.sh
+      # 1️⃣2️⃣ diy-part2.sh (在这里生成 .config + olddefconfig)
       - name: Run diy-part2.sh
         run: |
           cd lede
           chmod +x diy-part2.sh
           ./diy-part2.sh
 
-      # 1️⃣3️⃣ 应用 .config (使用 `make olddefconfig` 避免交互菜单)
-      - name: Apply Custom Config
-        run: |
-          cd lede
-          [ -e .config ] && cp .config .config.backup
-          make olddefconfig  # 不会弹出交互式菜单
-
-      # 1️⃣4️⃣ 编译 OpenWrt
+      # 1️⃣3️⃣ 编译 OpenWrt(无 "Apply Custom Config")
       - name: Compile OpenWrt
         run: |
           cd lede
@@ -113,7 +107,7 @@ jobs:
           export CONFIG_CCACHE=y
           make -j2 V=s
 
-      # 1️⃣5️⃣ 上传编译后的固件
+      # 1️⃣4️⃣ 上传固件
       - name: Upload Firmware
         uses: actions/upload-artifact@v4
         with:
@@ -121,7 +115,7 @@ jobs:
           path: lede/bin/targets/
           compression-level: 0
 
-      # 1️⃣6️⃣ 上传编译日志（无论成功或失败）
+      # 1️⃣5️⃣ 上传日志
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
