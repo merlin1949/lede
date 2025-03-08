@@ -4,7 +4,7 @@
 # 更新日期：2024-04-20
 # =================================================
 
-name: OpenWrt x86 Build
+name: OpenWRT_Local_Runner
 
 on:
   workflow_dispatch:  # 手动触发
