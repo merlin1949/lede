@@ -53,7 +53,7 @@ jobs:
       run: |
         sudo apt-get update -y
         # 安装所有必要依赖（包含终端修复包）
-        sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib \
+          echo "${{ secrets.SUDO_PASSWORD }}" | sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib \
           gettext git libncurses5-dev libssl-dev python3 python3-pip rsync unzip zlib1g-dev \
           libelf-dev liblzma-dev lib32z1-dev pkg-config autoconf ncurses-term ncurses-base
 
