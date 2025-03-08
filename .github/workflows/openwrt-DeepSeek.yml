@@ -9,7 +9,7 @@ name: OpenWrt x86 Build
 on:
   workflow_dispatch:  # 手动触发
   push:
-    branches: [ main ] # 代码推送触发
+    branches: [ master ] # 代码推送触发
 
 env:
   CCACHE_DIR: /tmp/ccache  # 缓存目录
@@ -30,7 +30,12 @@ jobs:
         path: lede  # 这样 `lede` 目录不会嵌套
         submodules: recursive  # 递归克隆子模块
         fetch-depth: 0         # 加速克隆
-
+    # ---------------------- 阶段1.1：检查路径 ----------------------  
+    - name: 检查checkout之后的路径
+      run: |
+        ls
+        pwd
+        ls lede/
     # ---------------------- 阶段2：缓存管理 ----------------------
     - name: 📦 加载缓存
       uses: actions/cache@v3
@@ -58,8 +63,8 @@ jobs:
     # ---------------------- 阶段4：确保脚本在正确目录 ----------------------
     - name: 🛠️ 复制自定义脚本到 lede 目录
       run: |
-        cp $GITHUB_WORKSPACE/diy-part1.sh $GITHUB_WORKSPACE/lede/
-        cp $GITHUB_WORKSPACE/diy-part2.sh $GITHUB_WORKSPACE/lede/
+        # cp $GITHUB_WORKSPACE/diy-part1.sh $GITHUB_WORKSPACE/lede/
+        # cp $GITHUB_WORKSPACE/diy-part2.sh $GITHUB_WORKSPACE/lede/
 
     # ---------------------- 阶段5：执行自定义脚本 ----------------------
     - name: 🛠️ 执行 diy-part1.sh
