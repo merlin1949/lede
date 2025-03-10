@@ -46,6 +46,22 @@ jobs:
         echo "TERM=linux" >> $GITHUB_ENV
         echo "TERMINFO=/usr/share/terminfo" >> $GITHUB_ENV
 
+    - name: 🔄 手动克隆 `firmware-utils`
+      run: |
+        cd lede/dl
+        if [ ! -d firmware-utils ]; then
+          echo "🔄 `firmware-utils` 源码不存在，手动克隆..."
+          git clone https://git.openwrt.org/project/firmware-utils.git firmware-utils
+          cd firmware-utils
+          git checkout 4b7638925d3eac03e614e40bc30cb49f5877c46d  # 固定到编译需要的版本
+          git submodule update --init --recursive
+          cd ..
+          tar -czvf firmware-utils.tar.gz firmware-utils
+          mv firmware-utils.tar.gz ../dl/firmware-utils-2024-10-20-4b763892.tar.xz
+        else
+          echo "✅ `firmware-utils` 已存在，跳过克隆"
+        fi
+        
     - name: 🔄 更新 feeds 并安装 `po2lmo`
       run: |
         cd lede
