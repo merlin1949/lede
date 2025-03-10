@@ -48,7 +48,9 @@ jobs:
 
     - name: 🔄 手动克隆 `firmware-utils`
       run: |
-        cd lede/dl
+        cd lede
+        mkdir -p dl  # 确保 dl 目录存在
+        cd dl
         if [ ! -d firmware-utils ]; then
           echo "🔄 `firmware-utils` 源码不存在，手动克隆..."
           git clone https://git.openwrt.org/project/firmware-utils.git firmware-utils
