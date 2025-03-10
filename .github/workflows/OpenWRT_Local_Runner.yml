@@ -46,16 +46,14 @@ jobs:
         echo "TERM=linux" >> $GITHUB_ENV
         echo "TERMINFO=/usr/share/terminfo" >> $GITHUB_ENV
 
-    - name: 🛠️ 安装 po2lmo
-      run: |
-        cd lede
-        if [ -d package/lean/default-settings/tools/po2lmo ]; then
-          pushd package/lean/default-settings/tools/po2lmo
-          make && sudo make install
-          popd
-        else
-          echo "❌ po2lmo 源码不存在，跳过编译"
-        fi
+        # 安装 po2lmo 工具
+        echo "${{ secrets.SUDO_PASSWORD }}" | sudo -S apt-get install -y subversion
+        svn checkout https://github.com/openwrt/luci/trunk/modules/luci-base/src
+        cd src
+        make
+        sudo cp po2lmo /usr/local/bin/
+        cd ..
+        rm -rf src
 
     - name: ⚙️ 生成配置
       run: |
