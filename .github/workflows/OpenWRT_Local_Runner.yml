@@ -46,6 +46,17 @@ jobs:
         echo "TERM=linux" >> $GITHUB_ENV
         echo "TERMINFO=/usr/share/terminfo" >> $GITHUB_ENV
 
+    - name: 🛠️ 安装 po2lmo
+      run: |
+        cd lede
+        if [ -d package/lean/default-settings/tools/po2lmo ]; then
+          pushd package/lean/default-settings/tools/po2lmo
+          make && sudo make install
+          popd
+        else
+          echo "❌ po2lmo 源码不存在，跳过编译"
+        fi
+
     - name: ⚙️ 生成配置
       run: |
         cd lede
